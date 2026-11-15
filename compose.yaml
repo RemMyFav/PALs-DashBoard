@@ -1,0 +1,84 @@
+name: ${COMPOSE_PROJECT_NAME:-pals-dashboard}
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [web]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://supertokens:${POSTGRES_PASSWORD}@database:5432/supertokens
+      SUPERTOKENS_CONNECTION_URI: http://auth:3567
+      SUPERTOKENS_API_KEY: ${SUPERTOKENS_API_KEY:?Run the Docker setup command in README.md first}
+    depends_on:
+      auth:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [web, identity]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  auth:
+    build: ./auth
+    environment:
+      POSTGRESQL_HOST: database
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE_NAME: supertokens
+      POSTGRESQL_USER: supertokens
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?Run the Docker setup command in README.md first}
+      API_KEYS: ${SUPERTOKENS_API_KEY:?Run the Docker setup command in README.md first}
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [identity]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3567/hello"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: supertokens
+      POSTGRES_USER: supertokens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run the Docker setup command in README.md first}
+    volumes:
+      - auth-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks: [identity]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supertokens -d supertokens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  web:
+  identity:
+    internal: true
+
+volumes:
+  auth-data:
