@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAnonymousResponseCsv, isSurveyId, normalizeAccountEmail, normalizeJoinCode, normalizeRatings, parseSurveyCsv } from '../src/surveys.js';
+import { buildAnonymousResponseCsv, isSurveyId, normalizeAccountEmail, normalizeJoinCode, normalizeRatings, normalizeSurveyAccessRole, parseSurveyCsv, parseSurveyXlsx } from '../src/surveys.js';
+import * as XLSX from 'xlsx';
+import { normalizeAnswerMode, normalizeRankings } from '../src/surveys.js';
 
 test('CSV parser reads only the question column and preserves row order', () => {
   const csv = Buffer.from('category,question,score\nProduct,"How easy was setup, overall?",5\nSupport,How was support?,4\n');
@@ -17,6 +19,17 @@ test('CSV parser rejects missing, duplicate, empty, and oversized question colum
   assert.throws(() => parseSurveyCsv(Buffer.from('question,Question\nOne,Two\n')), /exactly one/);
   assert.throws(() => parseSurveyCsv(Buffer.from('question\n   \n')), /does not contain any questions/);
   assert.throws(() => parseSurveyCsv(Buffer.from(`question\n${'x'.repeat(2001)}\n`)), /2000 characters/);
+});
+
+test('Excel parser reads the question column from the first worksheet', () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['category', 'question'],
+    ['Mood', 'How do you feel today?'],
+    ['Sleep', 'How well did you sleep?'],
+  ]), 'Survey');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  assert.deepEqual(parseSurveyXlsx(buffer), ['How do you feel today?', 'How well did you sleep?']);
 });
 
 test('survey IDs accept only version 4 UUIDs', () => {
@@ -39,6 +52,37 @@ test('ratings require one whole-number score from 1 to 5 for each answer', () =>
   assert.throws(() => normalizeRatings([0, 3]), /whole number/);
   assert.throws(() => normalizeRatings([2.5]), /whole number/);
   assert.throws(() => normalizeRatings('5'), /every question/);
+});
+
+test('survey access accepts only Participant and Co-owner roles', () => {
+  assert.equal(normalizeSurveyAccessRole('participant'), 'participant');
+  assert.equal(normalizeSurveyAccessRole('co_owner'), 'co_owner');
+  assert.throws(() => normalizeSurveyAccessRole('owner'), /Participant or Co-owner/);
+  assert.throws(() => normalizeSurveyAccessRole('admin'), /Participant or Co-owner/);
+});
+
+test('dimension rankings preserve selection order and reject invalid answers', () => {
+  assert.equal(normalizeAnswerMode(), 'rating');
+  assert.equal(normalizeAnswerMode('ranking'), 'ranking');
+  assert.throws(() => normalizeAnswerMode('other'), /valid survey answer mode/);
+  assert.deepEqual(normalizeRankings([['Social', 'Emotional'], ['Physical']]), [
+    ['Social', 'Emotional'], ['Physical'],
+  ]);
+  for (const invalid of [[[]], [['Social', 'Social']], [['Unknown']], [5], []]) {
+    assert.throws(() => normalizeRankings(invalid), /rank/i);
+  }
+});
+
+test('anonymous ranking CSV lists only selected dimensions in rank order', () => {
+  const csv = buildAnonymousResponseCsv(
+    [{ question: 'First question' }, { question: 'Second question' }],
+    [{ rankings: [['Social', 'Physical'], ['Emotional']] }],
+    'ranking',
+  );
+  assert.match(csv, /"question","Respondent 01"/);
+  assert.match(csv, /"First question","Social, Physical"/);
+  assert.match(csv, /"Second question","Emotional"/);
+  assert.doesNotMatch(csv, /Financial|@/);
 });
 
 test('anonymous CSV contains original questions and numbered respondents without identity data', () => {

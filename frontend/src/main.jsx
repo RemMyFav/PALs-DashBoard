@@ -6,7 +6,7 @@ import Inbox from './Inbox';
 import './styles.css';
 
 function Brand() {
-  return <a className="brand" href="/" aria-label="PALs home"><span className="brand-mark">p.</span><span>PALs<span className="brand-sub">PSYCHOMETRICS</span></span></a>;
+  return <a className="brand" href="/inbox" aria-label="PALs Inbox"><span className="brand-mark">p.</span><span>PALs<span className="brand-sub">PSYCHOMETRICS</span></span></a>;
 }
 
 function AuthForm({ register, onSuccess, navigate }) {
@@ -126,8 +126,10 @@ function Dashboard({ me, path, navigate, onExpired, onLogout }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const admin = me.permissions.includes('admin:access');
+  const surveyManager = me.canManageSurveys;
   const surveyPath = path === '/surveys' || path.startsWith('/surveys/');
   const inboxPath = path === '/inbox' || path.startsWith('/inbox/');
+  const accountPath = path === '/account';
   async function logout() {
     setBusy(true);
     setError('');
@@ -142,12 +144,9 @@ function Dashboard({ me, path, navigate, onExpired, onLogout }) {
     <header className="workspace-header"><Brand /><div className="header-actions"><span className="role-badge">{admin ? 'Admin' : 'Member'}</span><button className="secondary" disabled={busy} onClick={logout}>{busy ? 'Signing out…' : 'Sign out'}</button></div></header>
     <main className="workspace-main">
       <div className="page-heading"><span className="eyebrow">PSYCHOMETRIC SURVEY HUB</span><h1>Every response moves understanding forward.</h1><p className="muted">Review assigned questionnaires, contribute your perspective, and track what you have completed.</p></div>
-      <nav className="tabs" aria-label="Account navigation"><button className={path === '/' ? 'active' : ''} aria-current={path === '/' ? 'page' : undefined} onClick={() => navigate('/')}>Account</button><button className={inboxPath ? 'active' : ''} aria-current={inboxPath ? 'page' : undefined} onClick={() => navigate('/inbox')}>My surveys</button>{admin && <button className={surveyPath ? 'active' : ''} aria-current={surveyPath ? 'page' : undefined} onClick={() => navigate('/surveys')}>Manage surveys</button>}{admin && <button className={path === '/admin' ? 'active' : ''} aria-current={path === '/admin' ? 'page' : undefined} onClick={() => navigate('/admin')}>Admin access</button>}</nav>
+      <nav className="tabs" aria-label="Primary navigation"><button className={inboxPath ? 'active' : ''} aria-current={inboxPath ? 'page' : undefined} onClick={() => navigate('/inbox')}>Inbox</button><button className={surveyPath ? 'active' : ''} aria-current={surveyPath ? 'page' : undefined} onClick={() => navigate('/surveys')}>Manage surveys</button><button className={accountPath ? 'active' : ''} aria-current={accountPath ? 'page' : undefined} onClick={() => navigate('/account')}>Account</button></nav>
       {error && <p className="notice error" role="alert">{error}</p>}
-      {inboxPath ? <Inbox path={path} navigate={navigate} onExpired={onExpired} /> : surveyPath && admin ? <Surveys path={path} navigate={navigate} onExpired={onExpired} /> : path === '/admin' && admin ? <AdminPanel onExpired={onExpired} /> : <div className="account-grid">
-        <section className="card"><div className="card-heading"><h2>Account details</h2><span className="small-tag">Signed in</span></div><dl><dt>Email address</dt><dd>{me.email}</dd><dt>Account role</dt><dd>{admin ? 'Admin' : 'Member'}</dd><dt>Member since</dt><dd>{new Date(me.joinedAt).toLocaleDateString('en')}</dd></dl></section>
-        <section className="card access-card"><span className="eyebrow">PARTICIPATION</span><h2>Your survey access</h2><ul className="capabilities"><li><span aria-hidden="true">✓</span>Complete assigned psychometric surveys</li><li><span aria-hidden="true">✓</span>Submit and update 1–5 responses</li><li><span aria-hidden="true">✓</span>Join a survey with a 4-digit code</li>{admin && <li><span aria-hidden="true">✓</span>Create, assign, and export survey results</li>}</ul><p className="muted small">Administrator exports use anonymous respondent labels instead of account emails.</p></section>
-      </div>}
+      {inboxPath ? <Inbox path={path} navigate={navigate} onExpired={onExpired} /> : surveyPath ? <Surveys path={path} navigate={navigate} onExpired={onExpired} canCreate={admin} /> : <div className="account-stack"><div className="account-grid"><section className="card"><div className="card-heading"><h2>Account details</h2><span className="small-tag">Signed in</span></div><dl><dt>Email address</dt><dd>{me.email}</dd><dt>Account role</dt><dd>{admin ? 'Admin' : 'Member'}</dd><dt>Member since</dt><dd>{new Date(me.joinedAt).toLocaleDateString('en')}</dd></dl></section><section className="card access-card"><span className="eyebrow">PARTICIPATION</span><h2>Your survey access</h2><ul className="capabilities"><li><span aria-hidden="true">✓</span>Complete assigned psychometric surveys</li><li><span aria-hidden="true">✓</span>Submit and update 1–5 responses</li><li><span aria-hidden="true">✓</span>Join a survey with a 4-digit code</li>{surveyManager && <li><span aria-hidden="true">✓</span>Manage shared survey projects</li>}{admin && <li><span aria-hidden="true">✓</span>Create new survey projects</li>}</ul><p className="muted small">Administrator exports use anonymous respondent labels instead of account emails.</p></section></div>{admin && <AdminPanel onExpired={onExpired} />}</div>}
     </main>
     <footer className="workspace-footer">PALs Psychometrics <span>Thoughtful questions. Meaningful responses.</span></footer>
   </div>;
@@ -179,7 +178,8 @@ function App() {
       if (await Session.doesSessionExist()) {
         const account = await getJson('/api/me');
         setMe(account);
-        if (['/login', '/register'].includes(window.location.pathname)) navigate('/', true);
+        if (['/', '/login', '/register'].includes(window.location.pathname)) navigate('/inbox', true);
+        else if (window.location.pathname === '/admin') navigate('/account', true);
       } else {
         setMe(null);
         if (!['/login', '/register'].includes(window.location.pathname)) navigate('/login', true);

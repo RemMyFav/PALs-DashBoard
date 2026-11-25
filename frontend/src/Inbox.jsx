@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest, getJson } from './auth';
 
+const WELLNESS_DIMENSIONS = [
+  'Emotional', 'Environmental', 'Financial', 'Intellectual',
+  'Occupational', 'Physical', 'Social', 'Spiritual',
+];
+
 function formatDate(value) {
   return new Date(value).toLocaleDateString('en', { year: 'numeric', month: 'short', day: 'numeric' });
 }
@@ -8,6 +13,8 @@ function formatDate(value) {
 function InboxDetail({ id, navigate, onExpired }) {
   const [survey, setSurvey] = useState(null);
   const [ratings, setRatings] = useState({});
+  const [rankings, setRankings] = useState({});
+  const isRanking = survey?.answerMode === 'ranking';
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [missingPosition, setMissingPosition] = useState(null);
@@ -17,7 +24,12 @@ function InboxDetail({ id, navigate, onExpired }) {
     getJson(`/api/inbox/${id}`).then(result => {
       if (active) {
         setSurvey(result.survey);
-        setRatings(Object.fromEntries((result.survey.answers || []).map(answer => [answer.position, answer.rating])));
+        const answers = result.survey.answers ?? [];
+        if (result.survey.answerMode === 'ranking') {
+          setRankings(Object.fromEntries(answers.map(({ position, ranking }) => [position, ranking])));
+        } else {
+          setRatings(Object.fromEntries(answers.map(({ position, rating }) => [position, rating])));
+        }
       }
     }).catch(cause => {
       if (!active) return;
@@ -39,17 +51,28 @@ function InboxDetail({ id, navigate, onExpired }) {
       setDeleting(false);
     }
   }
+  function toggleDimension(position, dimension) {
+    setRankings(current => {
+      const ranking = current[position] ?? [];
+      const updated = ranking.includes(dimension) ? ranking.filter(value => value !== dimension) : [...ranking, dimension];
+      return { ...current, [position]: updated };
+    });
+    if (missingPosition === position) setMissingPosition(null);
+  }
+
   async function submitResponses(event) {
     event.preventDefault();
     if (saving || !survey) return;
-    const unanswered = survey.questions.find(question => !Number.isInteger(ratings[question.position]));
+    const unanswered = survey.questions.find(({ position }) => isRanking
+      ? !rankings[position]?.length
+      : !Number.isInteger(ratings[position]));
     if (unanswered) {
       setError('');
       setMissingPosition(unanswered.position);
       window.requestAnimationFrame(() => {
         const question = document.getElementById(`response-question-${unanswered.position}`);
         question?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        question?.querySelector('input[type="radio"]')?.focus({ preventScroll: true });
+        question?.querySelector(isRanking ? '.dimension-option' : 'input[type="radio"]')?.focus({ preventScroll: true });
       });
       return;
     }
@@ -60,7 +83,9 @@ function InboxDetail({ id, navigate, onExpired }) {
       await apiRequest(`/api/inbox/${id}/responses`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ratings: survey.questions.map(question => ratings[question.position]) }),
+        body: JSON.stringify(isRanking
+          ? { rankings: survey.questions.map(({ position }) => rankings[position]) }
+          : { ratings: survey.questions.map(({ position }) => ratings[position]) }),
       });
       navigate('/inbox', false, { responseSubmitted: true });
     } catch (cause) {
@@ -75,9 +100,46 @@ function InboxDetail({ id, navigate, onExpired }) {
     {error && <p className="notice error" role="alert">{error}</p>}
     {!survey && !error && <div className="card" role="status">Loading survey…</div>}
     {survey && <>
-      <div className="survey-title-row"><div><span className="eyebrow">ASSIGNED QUESTIONNAIRE</span><h2>{survey.title}</h2><p className="muted">Assigned by {survey.senderEmail} · Received {formatDate(survey.joinedAt)}</p></div><div className="detail-actions"><span className="role-badge">1–5 response scale</span><button className="danger-button" type="button" disabled={deleting} onClick={deleteSurvey}>{deleting ? 'Deleting…' : 'Delete survey'}</button></div></div>
+      <div className="survey-title-row"><div><span className="eyebrow">ASSIGNED QUESTIONNAIRE</span><h2>{survey.title}</h2><p className="muted">Assigned by {survey.senderEmail} · Received {formatDate(survey.joinedAt)}</p></div><div className="detail-actions"><span className="role-badge">{isRanking ? 'Dimension ranking' : '1–5 response scale'}</span><button className="danger-button" type="button" disabled={deleting} onClick={deleteSurvey}>{deleting ? 'Deleting…' : 'Delete survey'}</button></div></div>
       <form className="response-form" onSubmit={submitResponses}>
-        <ol className="question-list response-list">{survey.questions.map(item => <li id={`response-question-${item.position}`} className={missingPosition === item.position ? 'missing-question' : ''} key={item.position}><span className="question-number">{String(item.position).padStart(2, '0')}</span><div className="response-question"><p>{item.question}</p><fieldset aria-invalid={missingPosition === item.position} aria-describedby={missingPosition === item.position ? `missing-answer-${item.position}` : undefined}><legend className="visually-hidden">Rating for question {item.position}</legend><div className="rating-scale" aria-label={`Rating for question ${item.position}`}>{[1, 2, 3, 4, 5].map(value => <label className="rating-option" key={value}><input type="radio" name={`question-${item.position}`} value={value} checked={ratings[item.position] === value} onChange={() => { setRatings(current => ({ ...current, [item.position]: value })); if (missingPosition === item.position) setMissingPosition(null); }} /><span>{value}</span></label>)}</div>{missingPosition === item.position && <p id={`missing-answer-${item.position}`} className="missing-answer" role="alert">Choose a rating from 1 to 5 before submitting.</p>}</fieldset></div></li>)}</ol>
+        {isRanking && <p className="muted">Select the dimensions that fit each question, starting with the closest match. Select a dimension again to remove it. Unselected dimensions are left out.</p>}
+        <ol className="question-list response-list">
+          {survey.questions.map(item => {
+            const { position } = item;
+            const missing = missingPosition === position;
+            const ranking = rankings[position] ?? [];
+            return <li id={`response-question-${position}`} className={missing ? 'missing-question' : ''} key={position}>
+              <span className="question-number">{String(position).padStart(2, '0')}</span>
+              <div className="response-question">
+                <p>{item.question}</p>
+                <fieldset aria-invalid={missing} aria-describedby={missing ? `missing-answer-${position}` : undefined}>
+                  <legend className="visually-hidden">{isRanking ? 'Dimension ranking' : 'Rating'} for question {position}</legend>
+                  {isRanking ? <div className="dimension-options">
+                    {WELLNESS_DIMENSIONS.map(dimension => {
+                      const rank = ranking.indexOf(dimension) + 1;
+                      return <button key={dimension} type="button" className="dimension-option" aria-pressed={rank > 0}
+                        onClick={() => toggleDimension(position, dimension)}>
+                        {dimension}{rank > 0 && <span className="dimension-rank">Rank {rank}</span>}
+                      </button>;
+                    })}
+                  </div> : <div className="rating-scale">
+                    {[1, 2, 3, 4, 5].map(value => <label className="rating-option" key={value}>
+                      <input type="radio" name={`question-${position}`} value={value} checked={ratings[position] === value}
+                        onChange={() => {
+                          setRatings(current => ({ ...current, [position]: value }));
+                          if (missing) setMissingPosition(null);
+                        }} />
+                      <span>{value}</span>
+                    </label>)}
+                  </div>}
+                  {missing && <p id={`missing-answer-${position}`} className="missing-answer" role="alert">
+                    {isRanking ? 'Select at least one dimension before submitting.' : 'Choose a rating from 1 to 5 before submitting.'}
+                  </p>}
+                </fieldset>
+              </div>
+            </li>;
+          })}
+        </ol>
         <div className="response-actions"><p>{survey.submittedAt ? `Last submitted ${formatDate(survey.submittedAt)}.` : 'Please answer every question as thoughtfully as you can.'} Your email and account ID are not included in the administrator's CSV export.</p><button className="primary" type="submit" disabled={saving}>{saving ? 'Submitting…' : survey.submittedAt ? 'Update responses' : 'Submit responses'}</button></div>
       </form>
     </>}
@@ -129,7 +191,7 @@ function InboxList({ navigate, onExpired }) {
 
   return <section>
     {showThanks && <div className="thank-you-banner" role="status"><span aria-hidden="true">✓</span><div><strong>Thank you for your response.</strong><p>Your answers have been recorded. Every thoughtful response helps create clearer, more meaningful measurement.</p></div></div>}
-    <div className="inbox-heading"><div><span className="eyebrow">YOUR QUESTIONNAIRES</span><h2 className="section-title">Psychometric surveys assigned to you</h2><p className="muted">Your perspective is the most important part. Open a questionnaire when you are ready to respond.</p></div><form className="join-form" onSubmit={join}><label htmlFor="join-code">Join with a survey code</label><div className="inline-form"><input id="join-code" className="code-input" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} required placeholder="0000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 4))} /><button className="primary" type="submit" disabled={joining || code.length !== 4}>{joining ? 'Joining…' : 'Join'}</button></div></form></div>
+    <div className="inbox-heading"><div><span className="eyebrow">INBOX · SURVEYS TO COMPLETE</span><h2 className="section-title">Surveys assigned to you by someone else</h2><p className="muted">Inbox is for questionnaires you have been asked to answer. Surveys you own or co-manage are listed separately under Manage surveys.</p></div><form className="join-form" onSubmit={join}><label htmlFor="join-code">Join with a survey code</label><div className="inline-form"><input id="join-code" className="code-input" inputMode="numeric" pattern="[0-9]{4}" maxLength={4} required placeholder="0000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 4))} /><button className="primary" type="submit" disabled={joining || code.length !== 4}>{joining ? 'Joining…' : 'Join'}</button></div></form></div>
     {error && <p className="notice error" role="alert">{error}</p>}
     <div className="survey-grid">
       {loading && <div className="card" role="status">Loading your questionnaires…</div>}

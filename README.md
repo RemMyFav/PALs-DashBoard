@@ -2,9 +2,9 @@
 
 PALs Psychometrics is a survey application for creating, assigning, completing, and anonymously exporting 1–5 psychometric questionnaire responses. It provides email registration, sign-in, sign-out, and separate participant and administrator access. Dependency installation, frontend builds, backend execution, and tests run inside Docker. The host only needs Docker Desktop with Linux containers and Docker Compose v2; Node, npm, and pnpm are not required on the host.
 
-Administrators can also create multiple survey projects by uploading CSV files. A CSV must contain exactly one `question` column. Each non-empty row in that column becomes a question in the project; every other column is ignored. Survey projects are private to the administrator who created them and can be opened from the **Surveys** tab.
+Administrators can create multiple survey projects by uploading CSV files. A CSV must contain exactly one `question` column. Each non-empty row in that column becomes a question in the project; every other column is ignored. The creator becomes the Survey Owner and can invite other accounts as Participants or Co-owners.
 
-Every survey receives a globally unique 4-digit join code. An administrator can send a survey to an existing PALs account by entering that account's email address, or share the join code. Assigned and joined surveys appear in the recipient's **Inbox**, including the sender's email address. Recipients answer every question with a rating from 1 to 5. A successful submission returns them to the Inbox, where the survey is marked **Completed** in green. They may update their response or delete the survey from their own Inbox. Administrators can see the current number of completed responses for every survey, download all current responses as one CSV, revoke an individual user's access, or delete a survey project. Deleting a project immediately removes it from every recipient's Inbox.
+Every survey receives a globally unique 4-digit join code. Participants can be invited by email or join with the code. Their surveys appear under **My surveys**, where they answer every question with a rating from 1 to 5. A successful submission returns them to the list and marks the survey **Completed** in green. Owners and Co-owners can see completion counts, download the current response matrix, review questions, invite people, and switch accounts between Participant and Co-owner access. Only the Owner can delete the complete project.
 
 Response exports are anonymous: the first column contains the original question text and subsequent columns are named `Respondent 01`, `Respondent 02`, and so on. Email addresses, SuperTokens user IDs, and submission timestamps are not included. Leaving a survey or losing access also deletes that user's response from future exports. This is pseudonymous rather than guaranteed anonymity; a survey with very few participants may still allow an administrator to infer an identity from outside context.
 
@@ -46,22 +46,31 @@ Open [http://localhost:3000](http://localhost:3000) and select **Create account*
 
 To change the port, update both `WEB_PORT` and `PUBLIC_URL` in `.env`, then run `docker compose up -d --build --wait` again. The browser origin must match `PUBLIC_URL`. The default port binds only to `127.0.0.1` for local development.
 
-## Members and administrators
+## Global and per-survey roles
 
-| Action | Member | Administrator |
+| Global action | Member | Administrator |
 | --- | --- | --- |
 | Sign in, sign out, and view their own account | Allowed | Allowed |
 | Access the admin page and `/api/admin/overview` | Denied with 403 | Allowed |
-| Upload and view private survey projects | Not allowed | Allowed |
+| Create a new survey from CSV | Not allowed | Allowed |
 | Receive surveys and join with a 4-digit code | Allowed | Allowed |
 | Submit or update 1–5 ratings for a received survey | Allowed | Allowed |
-| Send a survey to another registered email | Not allowed | Allowed |
-| Download the anonymous response CSV for an owned survey | Not allowed | Allowed |
 | Leave a received survey | Allowed | Allowed |
-| Revoke survey access or delete an owned survey | Not allowed | Allowed |
 | Request an administrator role during registration | Not allowed | Not allowed |
 
-Registration always grants the `user` role. The application has no default administrator, fixed administrator password, or automatic first-user promotion. Survey management is available only to accounts with the stored `admin` role.
+Each survey separately grants one of these access levels:
+
+| Survey action | Participant | Co-owner | Owner |
+| --- | --- | --- | --- |
+| Answer and update responses | Allowed | Not allowed | Not allowed |
+| View completion count and download anonymous CSV | Not allowed | Allowed | Allowed |
+| View the question list | Not allowed | Allowed | Allowed |
+| Invite people and change Participant/Co-owner access | Not allowed | Allowed | Allowed |
+| Delete the complete survey project | Not allowed | Not allowed | Allowed |
+
+Changing a Participant to Co-owner deletes that account's existing response, because management accounts cannot also answer the same survey. Changing a Co-owner to Participant removes management access and makes the survey available for answering.
+
+Registration always grants the `user` role. The application has no default administrator, fixed administrator password, or automatic first-user promotion. The global `admin` role permits survey creation; per-survey Co-owner access can be granted to any registered account without making it a global administrator.
 
 To promote a registered member, run the command with the account's email address:
 

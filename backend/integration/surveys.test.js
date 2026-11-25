@@ -15,6 +15,7 @@ const emails = {
   admin: `survey-admin-${suffix}@example.com`,
   direct: `survey-direct-${suffix}@example.com`,
   code: `survey-code-${suffix}@example.com`,
+  coowner: `survey-coowner-${suffix}@example.com`,
 };
 
 async function api(path, { method = 'GET', token, json, form } = {}) {
@@ -67,6 +68,7 @@ test('survey sharing, joining, revocation, leaving, and deletion work across the
   userIds.push(adminId);
   userIds.push(await register(emails.direct));
   userIds.push(await register(emails.code));
+  userIds.push(await register(emails.coowner));
   await setAccountRole({ userId: adminId, role: 'admin', users: SuperTokens, userRoles: UserRoles, sessions: Session });
 
   const adminToken = await login(emails.admin);
@@ -81,9 +83,20 @@ test('survey sharing, joining, revocation, leaving, and deletion work across the
   assert.equal(project.questionCount, 2);
 
   const shared = await api(`/api/surveys/${surveyId}/share`, {
-    method: 'POST', token: adminToken, json: { email: emails.direct },
+    method: 'POST', token: adminToken, json: { email: emails.direct, accessRole: 'participant' },
   });
   assert.equal(shared.status, 201);
+
+  const coownerInvite = await api(`/api/surveys/${surveyId}/share`, {
+    method: 'POST', token: adminToken, json: { email: emails.coowner, accessRole: 'co_owner' },
+  });
+  assert.equal(coownerInvite.status, 201);
+  const coownerToken = await login(emails.coowner);
+  const coownerList = await api('/api/surveys', { token: coownerToken });
+  assert.equal((await coownerList.json()).surveys.find(survey => survey.id === surveyId).accessRole, 'co_owner');
+  assert.deepEqual((await (await api('/api/inbox', { token: coownerToken })).json()).surveys, []);
+  assert.equal((await api(`/api/surveys/${surveyId}/responses.csv`, { token: coownerToken })).status, 200);
+  assert.equal((await api(`/api/surveys/${surveyId}`, { method: 'DELETE', token: coownerToken })).status, 404);
 
   const directToken = await login(emails.direct);
   const directInbox = await api('/api/inbox', { token: directToken });
@@ -134,10 +147,38 @@ test('survey sharing, joining, revocation, leaving, and deletion work across the
   assert.deepEqual((await (await api('/api/inbox', { token: directToken })).json()).surveys, []);
 
   const sharedAgain = await api(`/api/surveys/${surveyId}/share`, {
-    method: 'POST', token: adminToken, json: { email: emails.direct },
+    method: 'POST', token: adminToken, json: { email: emails.direct, accessRole: 'participant' },
   });
   assert.equal(sharedAgain.status, 201);
   assert.equal((await api(`/api/surveys/${surveyId}`, { method: 'DELETE', token: adminToken })).status, 204);
   assert.deepEqual((await (await api('/api/inbox', { token: directToken })).json()).surveys, []);
   assert.equal((await api(`/api/surveys/${surveyId}`, { token: adminToken })).status, 404);
+
+  form.set('title', 'Integration dimension ranking');
+  form.set('answerMode', 'ranking');
+  const rankingUpload = await api('/api/surveys', { method: 'POST', token: adminToken, form });
+  assert.equal(rankingUpload.status, 201);
+  const rankingSurvey = (await rankingUpload.json()).survey;
+  surveyId = rankingSurvey.id;
+  assert.equal(rankingSurvey.answerMode, 'ranking');
+  assert.equal((await api('/api/inbox/join', {
+    method: 'POST', token: codeToken, json: { code: rankingSurvey.joinCode },
+  })).status, 201);
+  const responsesPath = `/api/inbox/${surveyId}/responses`;
+  assert.equal((await api(responsesPath, {
+    method: 'POST', token: codeToken, json: { ratings: [5, 2] },
+  })).status, 400);
+  const rankings = [['Social', 'Physical'], ['Emotional']];
+  assert.equal((await api(responsesPath, {
+    method: 'POST', token: codeToken, json: { rankings },
+  })).status, 200);
+  const rankedSurvey = await api(`/api/inbox/${surveyId}`, { token: codeToken });
+  const rankedResult = (await rankedSurvey.json()).survey;
+  assert.equal(rankedResult.answerMode, 'ranking');
+  assert.deepEqual(rankedResult.answers, rankings.map((ranking, index) => ({ position: index + 1, ranking })));
+  const rankingExport = await api(`/api/surveys/${surveyId}/responses.csv`, { token: adminToken });
+  assert.equal(rankingExport.status, 200);
+  const rankingCsv = await rankingExport.text();
+  assert.match(rankingCsv, /"First question","Social, Physical"/);
+  assert.doesNotMatch(rankingCsv, /Financial|@/);
 });
